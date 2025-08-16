@@ -1,0 +1,25 @@
+# Ruta: /code-pilot/.gitignore
+# Versión: 1.0
+
+# Dependencias
+# La carpeta node_modules es generada por 'npm install' y no debe ser versionada.
+node_modules/
+
+# Archivos de compilación
+# La carpeta dist es generada por 'npm run build' y no debe ser versionada.
+dist/
+
+# Archivos de entorno
+# El archivo .env contiene secretos como la API KEY y NUNCA debe ser versionado.
+.env
+
+# Logs
+# Ignorar cualquier archivo de log que se pueda generar.
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db
