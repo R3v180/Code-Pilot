@@ -1,11 +1,34 @@
 // Ruta: /src/services/gemini.ts
-// Versión: 3.3.0 (Usa getActiveApiKey del nuevo sistema de config)
+// Versión: 4.1 (Añade la capacidad de generar planes de corrección)
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import chalk from 'chalk';
-import type { Message } from '../ui/ChatPanel.js';
-// 1. Cambiamos la importación para usar la nueva función
 import { getActiveApiKey } from '../utils/config.js';
+
+export interface Message {
+  sender: 'user' | 'ai';
+  text: string;
+}
+
+export interface PlanStep {
+  type: 'command' | 'file_creation' | 'file_modification' | 'file_deletion' | 'thought';
+  command?: string;
+  filePath?: string;
+  content?: string;
+  description: string;
+}
+
+export interface ExecutionPlan {
+  thought: string;
+  plan: PlanStep[];
+}
+
+export interface DebugContext {
+  originalTask: string;
+  failedPlan: ExecutionPlan;
+  failedStepIndex: number;
+  errorOutput: string;
+}
 
 let genAI: GoogleGenerativeAI;
 let model: any;
@@ -16,7 +39,6 @@ function initializeApi(apiKey: string) {
 }
 
 function setupApi() {
-  // 2. Usamos la nueva función
   const apiKey = getActiveApiKey();
   if (!apiKey) {
     console.error(chalk.red.bold('Error Crítico: No se encontró la API Key.'));
@@ -33,27 +55,174 @@ export async function validateApiKey(apiKey: string): Promise<{isValid: boolean;
     return { isValid: true };
   } catch (error: any) {
     const errorMessage = error.message || 'Error desconocido.';
-    if (errorMessage.includes('API key not valid')) {
-      return { isValid: false, error: 'La API Key introducida no es válida.' };
-    }
-    if (errorMessage.includes('fetch failed')) {
-        return { isValid: false, error: 'No se pudo conectar con la API de Google. Revisa tu conexión a internet.' };
-    }
-    if (errorMessage.includes('is not found for API version')) {
-        return { isValid: false, error: 'Tu clave de API es válida, pero no tienes acceso al modelo Gemini necesario.' };
-    }
-    return { isValid: false, error: `Ocurrió un error inesperado. Revisa tu clave y conexión.` };
+    if (errorMessage.includes('API key not valid')) return { isValid: false, error: 'La API Key introducida no es válida.' };
+    if (errorMessage.includes('fetch failed')) return { isValid: false, error: 'No se pudo conectar. Revisa tu conexión.' };
+    if (errorMessage.includes('is not found for API version')) return { isValid: false, error: 'Tu clave no tiene acceso al modelo Gemini necesario.' };
+    return { isValid: false, error: `Ocurrió un error inesperado.` };
   }
 }
 
-export async function explainCode(code: string): Promise<string> {
-    return "Explicación no implementada en este flujo.";
+export async function generateExecutionPlan(
+  userTask: string,
+  contextFiles: { path: string; content: string }[]
+): Promise<ExecutionPlan> {
+  if (!model) setupApi();
+
+  let filesContext = 'No se ha proporcionado ningún archivo como contexto.';
+  if (contextFiles.length > 0) {
+    filesContext = contextFiles.map(file => `--- Archivo: ${file.path} ---\n\`\`\`\n${file.content}\n\`\`\``).join('\n\n');
+  }
+
+  const structuredPrompt = `
+Eres un Arquitecto de Software experto que crea planes de ejecución detallados para un programador junior (un agente autónomo).
+Tu tarea es analizar la petición del usuario y el contexto de archivos, y devolver un plan de acción en formato JSON.
+
+**Contexto de Archivos:**
+${filesContext}
+
+**Petición del Usuario:**
+---
+${userTask}
+---
+
+**Tu Misión:**
+Devuelve SIEMPRE un único objeto JSON válido, sin texto ni markdown fuera de él. El objeto debe tener la siguiente estructura:
+{
+  "thought": "Tu razonamiento paso a paso sobre cómo abordarás la tarea. Explica tu estrategia.",
+  "plan": [
+    {
+      "type": "command" | "file_creation" | "file_modification" | "file_deletion" | "thought",
+      "command": "string" | null,
+      "filePath": "string" | null,
+      "content": "string" | null,
+      "description": "Una descripción clara y concisa de este paso."
+    }
+  ]
 }
-export async function refactorCode(code: string, instruction: string): Promise<string> {
-    return "Refactorización no implementada en este flujo.";
+
+**Reglas para crear el plan:**
+- **Divide la tarea:** Descompón la petición en los pasos más pequeños y lógicos posibles.
+- **Usa las herramientas correctas:**
+  - **'command':** Para ejecutar comandos de terminal (ej: 'pnpm install express', 'mkdir src').
+  - **'file_creation':** Para crear un archivo nuevo. Debe incluir 'filePath' y 'content'.
+  - **'file_modification':** Para modificar un archivo existente. Debe incluir 'filePath' y 'content' con el contenido COMPLETO y actualizado del archivo.
+  - **'file_deletion':** Para borrar un archivo. Debe incluir 'filePath'.
+  - **'thought':** Para añadir un comentario o una pausa lógica en el plan.
+- **Sé explícito:** No asumas nada. Si necesitas instalar dependencias, crea un paso 'command' para ello.
+- **Rutas Relativas:** Usa siempre rutas relativas desde la raíz del proyecto (ej: 'src/index.js').
+- **Contenido Completo:** Para 'file_modification', proporciona siempre el contenido total del archivo, no solo un diff.
+
+**Ejemplo de Petición:** "Crea un servidor Express simple en un archivo index.js que responda 'Hola Mundo' en la raíz."
+**Ejemplo de Respuesta JSON:**
+{
+  "thought": "El usuario quiere un servidor Express. Primero, instalaré Express. Luego, crearé el archivo index.js con el código del servidor.",
+  "plan": [
+    {
+      "type": "command",
+      "command": "pnpm add express",
+      "filePath": null,
+      "content": null,
+      "description": "Instalar la dependencia de Express."
+    },
+    {
+      "type": "file_creation",
+      "command": null,
+      "filePath": "index.js",
+      "content": "const express = require('express');\\nconst app = express();\\nconst port = 3000;\\n\\napp.get('/', (req, res) => {\\n  res.send('Hola Mundo!');\\n});\\n\\napp.listen(port, () => {\\n  console.log(\`Servidor escuchando en http://localhost:\${port}\`);\\n});",
+      "description": "Crear el archivo del servidor Express."
+    }
+  ]
 }
-export async function generatePlan(taskDescription: string, projectStructure: string): Promise<string> {
-    return "Plan no implementado en este flujo.";
+`;
+  
+  try {
+    const result = await model.generateContent(structuredPrompt);
+    const response = result.response;
+    const textResponse = response.text();
+    
+    const jsonRegex = /\{[\s\S]*\}/;
+    const match = textResponse.match(jsonRegex);
+    if (match) {
+      return JSON.parse(match[0]) as ExecutionPlan;
+    }
+    return {
+      thought: "La IA no pudo generar un plan válido. La respuesta no fue un JSON.",
+      plan: [],
+    };
+  } catch (error) {
+    console.error(chalk.red.bold('Error al generar el plan de ejecución:'), error);
+    return {
+      thought: `Ocurrió un error al contactar con la API de Gemini: ${error}`,
+      plan: [],
+    };
+  }
+}
+
+export async function generateCorrectionPlan(
+  debugContext: DebugContext,
+  contextFiles: { path: string; content: string }[]
+): Promise<ExecutionPlan> {
+  if (!model) setupApi();
+
+  const filesContext = contextFiles.map(file => `--- Archivo: ${file.path} ---\n\`\`\`\n${file.content}\n\`\`\``).join('\n\n');
+  const failedPlanString = JSON.stringify(debugContext.failedPlan.plan, null, 2);
+
+  const structuredPrompt = `
+Eres un Programador Senior experto en depuración, revisando el trabajo de un agente junior.
+El agente intentó completar una tarea, pero su plan falló. Tu misión es analizar el error y crear un NUEVO plan de ejecución completo para solucionar el problema y completar la tarea original.
+
+**Tarea Original del Usuario:**
+---
+${debugContext.originalTask}
+---
+
+**Contexto de Archivos Actual:**
+${filesContext}
+
+**Plan Original que Falló:**
+---
+${failedPlanString}
+---
+
+**Paso Específico que Falló (índice ${debugContext.failedStepIndex}):**
+---
+${JSON.stringify(debugContext.failedPlan.plan[debugContext.failedStepIndex])}
+---
+
+**Salida del Error del Paso Fallido:**
+---
+${debugContext.errorOutput}
+---
+
+**Tu Misión:**
+1.  **Analiza la Causa Raíz:** En el campo "thought", explica por qué crees que el plan falló. Sé específico. Por ejemplo, "¿El comando era incorrecto? ¿Faltaba un paso previo? ¿El error indica un problema en un archivo?".
+2.  **Crea un Plan de Corrección:** En el campo "plan", crea un **NUEVO Y COMPLETO** plan de acción desde cero para lograr la tarea original del usuario. No asumas que los pasos anteriores al fallo tuvieron éxito. El nuevo plan debe ser ejecutable de principio a fin.
+3.  **Responde en JSON:** Devuelve SIEMPRE un único objeto JSON válido con la estructura { "thought": "...", "plan": [...] }.
+
+**Ejemplo de Análisis en "thought":**
+"El plan original falló porque el comando 'pnpm init' no es necesario si ya existe un archivo package.json, como indica el error 'ERR_PNPM_PACKAGE_JSON_EXISTS'. El nuevo plan omitirá este paso redundante y procederá directamente a instalar las dependencias."
+`;
+
+  try {
+    const result = await model.generateContent(structuredPrompt);
+    const response = result.response;
+    const textResponse = response.text();
+    const jsonRegex = /\{[\s\S]*\}/;
+    const match = textResponse.match(jsonRegex);
+    if (match) {
+      return JSON.parse(match[0]) as ExecutionPlan;
+    }
+    return {
+      thought: "La IA no pudo generar un plan de corrección válido.",
+      plan: [],
+    };
+  } catch (error) {
+    console.error(chalk.red.bold('Error al generar el plan de corrección:'), error);
+    return {
+      thought: `Ocurrió un error al contactar con la API de Gemini: ${error}`,
+      plan: [],
+    };
+  }
 }
 
 export async function generateChatResponse(
@@ -80,12 +249,9 @@ export async function generateChatResponse(
       return `--- Usuario:\n${message.text}`;
     } else {
       try {
-        const aiResponse = JSON.parse(JSON.stringify(message.text)); // Usamos JSON.stringify para asegurar que es un string válido
-        // Si el texto de la IA es a su vez un JSON stringified, lo parseamos
-        const parsedText = JSON.parse(aiResponse);
-        return `--- IA:\n${parsedText.explanation || message.text}`;
+        const aiResponse = JSON.parse(message.text);
+        return `--- IA:\n${aiResponse.explanation || message.text}`;
       } catch (e) {
-        // Si no es un JSON, lo usamos tal cual
         return `--- IA:\n${message.text}`;
       }
     }

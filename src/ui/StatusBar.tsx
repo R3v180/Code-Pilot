@@ -1,10 +1,10 @@
 // Ruta: src/ui/StatusBar.tsx
-// Versión: 1.1 (Añade el atajo de teclado para la configuración)
+// Versión: 1.2.1 (Corrige error de tipeo en variable)
 
 import React from 'react';
 import { Box, Text } from 'ink';
 
-export type ActivePanel = 'explorer' | 'chat' | 'staging';
+export type ActivePanel = 'explorer' | 'agent' | 'staging';
 export type AiStatus = 'idle' | 'thinking';
 
 interface StatusBarProps {
@@ -15,8 +15,6 @@ interface StatusBarProps {
 }
 
 const getHelpText = (panel: ActivePanel): string => {
-  // --- INICIO DE LA MODIFICACIÓN ---
-  // Se ha refactorizado para incluir siempre los atajos globales.
   let panelSpecificHelp = '';
   const globalHelp = '[Tab] Cambiar Panel | [Ctrl+K] Configuración';
 
@@ -24,17 +22,15 @@ const getHelpText = (panel: ActivePanel): string => {
     case 'explorer':
       panelSpecificHelp = '[↑/↓] Navegar | [Espacio] Seleccionar';
       break;
-    case 'chat':
-      panelSpecificHelp = '[Enter] Enviar';
+    case 'agent':
+      panelSpecificHelp = '[Enter] Enviar Tarea';
       break;
     case 'staging':
       panelSpecificHelp = '[↑/↓] Navegar | [Enter] Acciones';
       break;
   }
   
-  // Unimos la ayuda específica del panel con la ayuda global.
   return panelSpecificHelp ? `${panelSpecificHelp} | ${globalHelp}` : globalHelp;
-  // --- FIN DE LA MODIFICACIÓN ---
 };
 
 export function StatusBar({
@@ -44,11 +40,12 @@ export function StatusBar({
   stagedChangeCount,
 }: StatusBarProps) {
   const aiStatusText = aiStatus === 'thinking' ? '🧠 IA pensando...' : '✅ Listo';
+  // --- INICIO DE LA CORRECCIÓN ---
   const aiStatusColor = aiStatus === 'thinking' ? 'magenta' : 'green';
+  // --- FIN DE LA CORRECCIÓN ---
 
   return (
     <Box width="100%" justifyContent="space-between" paddingX={1}>
-      {/* --- Sección Izquierda: Logo y Contexto Actual --- */}
       <Box>
         <Text bold color="cyan">✈️ Code-Pilot </Text>
         <Text color="gray">| </Text>
@@ -59,12 +56,10 @@ export function StatusBar({
         <Text color="yellow">{stagedChangeCount}</Text>
       </Box>
 
-      {/* --- Sección Central: Estado de la IA --- */}
       <Box>
         <Text color={aiStatusColor} bold>{aiStatusText}</Text>
       </Box>
 
-      {/* --- Sección Derecha: Ayuda Contextual --- */}
       <Box>
         <Text color="gray">{getHelpText(activePanel)}</Text>
       </Box>
