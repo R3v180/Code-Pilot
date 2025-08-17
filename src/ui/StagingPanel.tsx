@@ -1,5 +1,5 @@
 // Ruta: /src/ui/StagingPanel.tsx
-// Versión: 4.4 (Acepta setActivePanel para consistencia)
+// Versión: 4.5 (Recibe y utiliza la ruta del proyecto)
 
 import React, { Dispatch, SetStateAction } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -7,11 +7,11 @@ import { StagedChange } from './App.js';
 import { diffLines, type Change } from 'diff';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import fsSync from 'node:fs';
 import { Editor } from './Editor.js';
 import { ActivePanel } from './StatusBar.js';
 
 interface StagingPanelProps {
+  projectPath: string; // 1. Añadimos la nueva prop
   stagedChanges: StagedChange[];
   isActive: boolean;
   onApplyChange: (index: number) => void;
@@ -24,7 +24,8 @@ interface StagingPanelProps {
 type StagingMode = 'navigate' | 'action' | 'edit';
 type Action = 'apply' | 'discard' | 'edit';
 
-export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscardChange, onEditChange, onPanelChange, setActivePanel }: StagingPanelProps) {
+// 2. Recibimos la prop en la firma del componente
+export function StagingPanel({ projectPath, stagedChanges, isActive, onApplyChange, onDiscardChange, onEditChange, onPanelChange, setActivePanel }: StagingPanelProps) {
     const [selectedIndex, setSelectedIndex] = React.useState(0);
     const [diff, setDiff] = React.useState<Change[] | null>(null);
     const [isLoadingDiff, setIsLoadingDiff] = React.useState(false);
@@ -59,8 +60,8 @@ export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscard
                 return;
             }
 
-            const projectDir = path.resolve(process.cwd(), fsSync.existsSync(path.join(process.cwd(), 'proyectos')) ? 'proyectos' : '');
-            const absolutePath = path.join(projectDir, change.filePath);
+            // 3. Usamos la ruta del proyecto para construir la ruta absoluta correcta
+            const absolutePath = path.join(projectPath, change.filePath);
 
             fs.readFile(absolutePath, 'utf-8')
                 .then(originalContent => {
@@ -75,7 +76,8 @@ export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscard
         } else {
             setDiff(null);
         }
-    }, [selectedIndex, stagedChanges, mode]);
+    // 4. Añadimos projectPath al array de dependencias
+    }, [selectedIndex, stagedChanges, mode, projectPath]);
 
     useInput((input, key) => {
         if (key.tab) {

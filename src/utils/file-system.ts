@@ -1,9 +1,10 @@
 // Ruta: /code-pilot/src/utils/file-system.ts
-// Versión: 2.3 (Usa la carpeta 'proyectos' y corrige la detección de tipo)
+// Versión: 2.5 (Añade función para listar directorios de proyectos)
 
 import { glob } from 'glob';
 import path from 'node:path';
-import fs from 'node:fs'; // <-- Importar 'fs' para comprobar si la carpeta existe
+import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 
 const IGNORE_PATTERNS = [
   '**/node_modules/**',
@@ -20,22 +21,42 @@ export interface FileTreeNode {
   type: 'file' | 'directory';
 }
 
-export async function getProjectStructureObject(): Promise<FileTreeNode> {
-  // --- CORRECCIÓN 1: Usar la carpeta 'proyectos' si existe ---
-  const projectRoot = process.cwd();
-  const devProjectsPath = path.join(projectRoot, 'proyectos');
-  const targetCwd = fs.existsSync(devProjectsPath) ? devProjectsPath : projectRoot;
-  // --- FIN CORRECCIÓN 1 ---
+// --- NUEVA FUNCIÓN ---
+/**
+ * Lista únicamente los subdirectorios de una ruta dada.
+ * Es ideal para encontrar los proyectos dentro de la carpeta 'proyectos'.
+ * @param basePath La ruta del directorio a escanear.
+ * @returns Una promesa que se resuelve con un array de nombres de directorios.
+ */
+export async function getProjectDirectories(basePath: string): Promise<string[]> {
+  try {
+    // Si el directorio base (ej. 'proyectos') no existe, lo creamos y devolvemos una lista vacía.
+    if (!fsSync.existsSync(basePath)) {
+      fsSync.mkdirSync(basePath, { recursive: true });
+      return [];
+    }
 
+    const dirents = await fs.readdir(basePath, { withFileTypes: true });
+    return dirents
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => dirent.name);
+  } catch (error) {
+    // En caso de cualquier otro error de lectura, devolvemos una lista vacía para no bloquear la app.
+    return [];
+  }
+}
+// --- FIN NUEVA FUNCIÓN ---
+
+
+export async function getProjectStructureObject(basePath: string): Promise<FileTreeNode> {
   const files = await glob('**/*', {
-    cwd: targetCwd, // <-- Usamos el directorio de trabajo objetivo
+    cwd: basePath,
     ignore: IGNORE_PATTERNS,
     nodir: false,
     dot: true,
-    // stat: true, // Usar stat es más lento pero más fiable
   });
 
-  const root: FileTreeNode = { name: path.basename(targetCwd), path: '.', type: 'directory', children: [] };
+  const root: FileTreeNode = { name: path.basename(basePath), path: '.', type: 'directory', children: [] };
 
   for (const file of files) {
     const parts = file.split(path.sep);
@@ -47,13 +68,8 @@ export async function getProjectStructureObject(): Promise<FileTreeNode> {
 
       if (!childNode) {
         const currentPath = parts.slice(0, i + 1).join(path.sep);
-        
-        // --- CORRECCIÓN 2: Detección de tipo más fiable ---
-        // Un path es un directorio si otro path en la lista es un hijo suyo.
-        // O si `fs.statSync` nos lo dice. Para evitar lentitud, usamos la primera heurística.
         const isDirectory = files.some(f => f.startsWith(currentPath + path.sep));
         const type = isDirectory ? 'directory' : 'file';
-        // --- FIN CORRECCIÓN 2 ---
 
         childNode = {
           name: part,
@@ -93,7 +109,6 @@ export async function getProjectStructureObject(): Promise<FileTreeNode> {
 
 export const flattenTree = (node: FileTreeNode, prefix = '', allNodes: { line: string, path: string, type: 'file' | 'directory', name: string }[] = []) => {
   const line = `${prefix}${node.name}`;
-  // No mostramos la raíz en la lista, empezamos desde sus hijos
   if (node.path !== '.') {
      allNodes.push({ line, path: node.path, type: node.type, name: node.name });
   }
@@ -106,9 +121,8 @@ export const flattenTree = (node: FileTreeNode, prefix = '', allNodes: { line: s
   return allNodes;
 };
 
-// Esta función no necesita cambios, depende de las de arriba.
 export async function getProjectStructure(): Promise<string> {
-    const obj = await getProjectStructureObject();
+    const obj = await getProjectStructureObject(process.cwd());
     const flattened = flattenTree(obj);
     return flattened.map(f => f.line).join('\n');
 }

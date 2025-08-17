@@ -1,5 +1,5 @@
 // Ruta: /src/ui/FileExplorer.tsx
-// Versión: 3.3 (Se recarga cuando el sistema de archivos cambia)
+// Versión: 3.4 (Recibe y utiliza la ruta del proyecto)
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -7,12 +7,13 @@ import { getProjectStructureObject, flattenTree } from '../utils/file-system.js'
 import path from 'node:path';
 
 interface FileExplorerProps {
+  projectPath: string; // 1. Añadimos la nueva prop
   selectedFiles: Set<string>;
   onFileSelect: (filePath: string) => void;
   onBulkFileSelect: (filePaths: string[], action: 'select' | 'deselect') => void;
   isActive: boolean;
   onPanelChange: () => void;
-  fileSystemVersion: number; // 1. Recibimos la nueva prop
+  fileSystemVersion: number;
 }
 
 interface FlatNode {
@@ -25,7 +26,8 @@ interface FlatNode {
 const FOLDER_ICON = '📁';
 const FILE_ICON = '📄';
 
-export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, isActive, onPanelChange, fileSystemVersion }: FileExplorerProps) {
+// 2. Recibimos la prop en la firma del componente
+export function FileExplorer({ projectPath, selectedFiles, onFileSelect, onBulkFileSelect, isActive, onPanelChange, fileSystemVersion }: FileExplorerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [flatStructure, setFlatStructure] = useState<FlatNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -33,10 +35,10 @@ export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, is
 
   const visibleHeight = process.stdout.rows > 10 ? process.stdout.rows - 10 : 10;
 
-  // 2. MODIFICACIÓN CLAVE: Este useEffect ahora se ejecutará al inicio Y cada vez que fileSystemVersion cambie.
   useEffect(() => {
-    setIsLoading(true); // Mostramos el mensaje de carga mientras se actualiza
-    getProjectStructureObject()
+    setIsLoading(true);
+    // 3. Pasamos la ruta del proyecto a la función que lee la estructura
+    getProjectStructureObject(projectPath)
       .then(treeObject => {
         const flattenedNodes = flattenTree(treeObject);
         setFlatStructure(flattenedNodes);
@@ -46,9 +48,8 @@ export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, is
         setFlatStructure([{ line: 'Error al cargar la estructura.', path: '', type: 'directory', name: 'Error' }]);
         setIsLoading(false);
       });
-  }, [fileSystemVersion]); // El array de dependencias ahora escucha los cambios
-
-  // ... el resto del componente no necesita cambios ...
+  // 4. Añadimos projectPath al array de dependencias
+  }, [fileSystemVersion, projectPath]); 
 
   useInput((input, key) => {
     if (key.tab) {

@@ -1,17 +1,16 @@
 // Ruta: /src/ui/App.tsx
-// Versión: 5.0 (Implementa el modo de configuración "modal")
+// Versión: 5.1 (Acepta y propaga la ruta del proyecto)
 
 import React, { useState, useEffect } from 'react';
-import { Box, useInput } from 'ink'; // 1. Importamos useInput
+import { Box, useInput } from 'ink';
 import fsPromises from 'node:fs/promises';
-import fs from 'node:fs';
 import path from 'node:path';
 import chokidar from 'chokidar';
 import { FileExplorer } from './FileExplorer.js';
 import { ChatPanel } from './ChatPanel.js';
 import { StagingPanel } from './StagingPanel.js';
 import { StatusBar, type ActivePanel, type AiStatus } from './StatusBar.js';
-import { ConfigManager } from './ConfigManager.js'; // 2. Importamos el gestor
+import { ConfigManager } from './ConfigManager.js';
 
 export interface StagedChange {
   filePath: string;
@@ -19,55 +18,44 @@ export interface StagedChange {
   type: 'creation' | 'modification';
 }
 
-type AppMode = 'main' | 'config'; // 3. Definimos los modos de la aplicación
+type AppMode = 'main' | 'config';
 
-export function App() {
+// 1. Definimos las props que recibirá App
+interface AppProps {
+  projectPath: string;
+}
+
+export function App({ projectPath }: AppProps) { // 2. Recibimos projectPath
   const [selectedFiles, setSelectedFiles] = useState(new Set<string>());
   const [stagedChanges, setStagedChanges] = useState<StagedChange[]>([]);
   const [activePanel, setActivePanel] = useState<ActivePanel>('explorer');
   const [aiStatus, setAiStatus] = useState<AiStatus>('idle');
   const [fileSystemVersion, setFileSystemVersion] = useState(0);
-  const [mode, setMode] = useState<AppMode>('main'); // 4. Nuevo estado para el modo
+  const [mode, setMode] = useState<AppMode>('main');
 
-  // Atajo de teclado global para abrir el gestor de configuración
   useInput((input, key) => {
     if (key.ctrl && input === 'k') {
       setMode(current => current === 'main' ? 'config' : 'main');
     }
   });
   
-  // (El useEffect de chokidar no necesita cambios)
   useEffect(() => {
-    const projectDir = path.resolve(process.cwd());
-    const targetDir = fs.existsSync(path.join(projectDir, 'proyectos')) ? path.join(projectDir, 'proyectos') : projectDir;
-
-    const watcher = chokidar.watch(targetDir, {
+    // 3. El observador ahora usa la ruta del proyecto
+    const watcher = chokidar.watch(projectPath, {
       ignored: /(^|[\/\\])\..|node_modules|dist|git/,
       persistent: true,
       ignoreInitial: true,
       depth: 10,
     });
-
     const triggerRefresh = () => setFileSystemVersion(v => v + 1);
-
     watcher
-      .on('add', triggerRefresh)
-      .on('unlink', triggerRefresh)
-      .on('addDir', triggerRefresh)
-      .on('unlinkDir', triggerRefresh);
+      .on('add', triggerRefresh).on('unlink', triggerRefresh)
+      .on('addDir', triggerRefresh).on('unlinkDir', triggerRefresh);
+    return () => { watcher.close(); };
+  }, [projectPath]); // Se reactiva si cambia la ruta del proyecto
 
-    return () => {
-      watcher.close();
-    };
-  }, []);
-
-  // ... (todas las funciones `handle...` no necesitan cambios)
   const handlePanelChange = () => {
-    setActivePanel(current => {
-      if (current === 'explorer') return 'chat';
-      if (current === 'chat') return 'staging';
-      return 'explorer';
-    });
+    setActivePanel(current => (current === 'explorer' ? 'chat' : current === 'chat' ? 'staging' : 'explorer'));
   };
   const handleFileSelect = (filePath: string) => {
     const newFiles = new Set(selectedFiles);
@@ -80,32 +68,30 @@ export function App() {
     setSelectedFiles(newFiles);
   };
   const handleStageChanges = (changes: StagedChange[]) => setStagedChanges(prev => [...prev, ...changes]);
+
   const handleApplyChange = async (index: number) => {
     const change = stagedChanges[index];
     if (!change) return;
     const contentToWrite = change.content || '';
-    const projectDir = path.resolve(process.cwd());
-    const targetDir = fs.existsSync(path.join(projectDir, 'proyectos')) ? path.join(projectDir, 'proyectos') : projectDir;
-    const absolutePath = path.join(targetDir, change.filePath);
+    // 4. La escritura de archivos ahora usa la ruta del proyecto
+    const absolutePath = path.join(projectPath, change.filePath);
     await fsPromises.mkdir(path.dirname(absolutePath), { recursive: true });
     await fsPromises.writeFile(absolutePath, contentToWrite); 
     setStagedChanges(prev => prev.filter((_, i) => i !== index));
     setFileSystemVersion(v => v + 1);
     setActivePanel('chat');
   };
+  
   const handleDiscardChange = (index: number) => {
     setStagedChanges(prev => prev.filter((_, i) => i !== index));
     setActivePanel('chat');
   };
   const handleEditChange = (index: number, newContent: string) => {
     setStagedChanges(prev =>
-      prev.map((change, i) =>
-        i === index ? { ...change, content: newContent } : change
-      )
+      prev.map((change, i) => i === index ? { ...change, content: newContent } : change)
     );
   };
 
-  // 5. Renderizado condicional basado en el modo
   if (mode === 'config') {
     return <ConfigManager onClose={() => setMode('main')} />;
   }
@@ -113,9 +99,10 @@ export function App() {
   return (
     <Box width="100%" height={process.stdout.rows - 1} flexDirection="column">
       <Box flexGrow={1} flexDirection="row">
-        {/* Paneles de la aplicación principal */}
         <Box borderStyle="round" borderColor={activePanel === 'explorer' ? 'cyan' : 'blue'} width="25%" paddingX={1}>
+          {/* 5. Pasamos la ruta del proyecto a los componentes hijos */}
           <FileExplorer
+            projectPath={projectPath}
             selectedFiles={selectedFiles}
             onFileSelect={handleFileSelect}
             onBulkFileSelect={handleBulkFileSelect}
@@ -126,6 +113,7 @@ export function App() {
         </Box>
         <Box borderStyle="round" borderColor={activePanel === 'chat' ? 'cyan' : 'green'} width="50%" paddingX={1}>
           <ChatPanel
+            projectPath={projectPath}
             selectedFiles={selectedFiles}
             onStageChanges={handleStageChanges}
             isActive={activePanel === 'chat'}
@@ -136,6 +124,7 @@ export function App() {
         </Box>
         <Box borderStyle="round" borderColor={activePanel === 'staging' ? 'cyan' : 'yellow'} flexGrow={1} paddingX={1}>
           <StagingPanel
+            projectPath={projectPath}
             stagedChanges={stagedChanges}
             isActive={activePanel === 'staging'}
             onApplyChange={handleApplyChange}

@@ -1,18 +1,16 @@
 // Ruta: /src/ui/ChatPanel.tsx
-// Versión: 3.3 (Cambia automáticamente a Staging al recibir cambios)
+// Versión: 3.4 (Recibe y utiliza la ruta del proyecto)
 
 import React, { useState, Dispatch, SetStateAction } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { generateChatResponse } from '../services/gemini.js';
 import fsPromises from 'node:fs/promises';
-import fs from 'node:fs';
 import path from 'node:path';
 import { StagedChange } from './App.js';
-import { AiStatus, ActivePanel } from './StatusBar.js'; // 1. Importamos ActivePanel
+import { AiStatus, ActivePanel } from './StatusBar.js';
 
 const SimpleMarkdown: React.FC<{ content: string }> = ({ content }) => {
-  // ... (componente sin cambios)
   const parts = content.split(/(\`\`\`[\s\S]*?\`\`\`)/g);
   return (
     <Box flexDirection="column">
@@ -36,12 +34,13 @@ const SimpleMarkdown: React.FC<{ content: string }> = ({ content }) => {
 };
 
 interface ChatPanelProps {
+  projectPath: string; // 1. Añadimos la nueva prop
   selectedFiles: Set<string>;
   onStageChanges: (changes: StagedChange[]) => void;
   isActive: boolean;
   setAiStatus: Dispatch<SetStateAction<AiStatus>>;
   onPanelChange: () => void;
-  setActivePanel: Dispatch<SetStateAction<ActivePanel>>; // 2. Añadimos la nueva prop
+  setActivePanel: Dispatch<SetStateAction<ActivePanel>>;
 }
 
 export interface Message {
@@ -49,8 +48,8 @@ export interface Message {
   text: string;
 }
 
-// 3. Añadimos setActivePanel a los argumentos
-export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus, onPanelChange, setActivePanel }: ChatPanelProps) {
+// 2. Recibimos la prop en la firma del componente
+export function ChatPanel({ projectPath, selectedFiles, onStageChanges, isActive, setAiStatus, onPanelChange, setActivePanel }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -71,10 +70,10 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
     setIsLoading(true);
     setAiStatus('thinking');
 
-    const projectDir = path.resolve(process.cwd(), fs.existsSync(path.join(process.cwd(), 'proyectos')) ? 'proyectos' : '');
     const contextFiles = await Promise.all(
       Array.from(selectedFiles).map(async (filePath) => {
-        const absolutePath = path.join(projectDir, filePath);
+        // 3. Usamos la ruta del proyecto para construir la ruta absoluta correcta
+        const absolutePath = path.join(projectPath, filePath);
         const content = await fsPromises.readFile(absolutePath, 'utf-8');
         return { path: filePath, content };
       })
@@ -95,7 +94,6 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
 
     if (newChanges.length > 0) {
       onStageChanges(newChanges);
-      // 4. MEJORA DE UX: Si hay cambios, cambiamos el foco a Staging.
       setActivePanel('staging');
     }
 
@@ -110,7 +108,6 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
       }
   }, { isActive });
 
-  // ... (resto del JSX sin cambios)
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Text bold color={isActive ? "cyan" : "green"}>Panel de Chat</Text>
