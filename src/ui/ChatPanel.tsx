@@ -1,18 +1,45 @@
 // Ruta: /src/ui/ChatPanel.tsx
-// Versión: 2.4
+// Versión: 3.1 (Añade manejo de cambio de panel)
 
-import React, { useState } from 'react';
-import { Box, Text } from 'ink';
+import React, { useState, Dispatch, SetStateAction } from 'react';
+import { Box, Text, useInput } from 'ink'; // Importamos useInput
 import TextInput from 'ink-text-input';
 import { generateChatResponse } from '../services/gemini.js';
-import fs from 'node:fs/promises';
+import fsPromises from 'node:fs/promises';
+import fs from 'node:fs';
 import path from 'node:path';
 import { StagedChange } from './App.js';
+import { AiStatus } from './StatusBar.js';
+
+const SimpleMarkdown: React.FC<{ content: string }> = ({ content }) => {
+  const parts = content.split(/(\`\`\`[\s\S]*?\`\`\`)/g);
+  return (
+    <Box flexDirection="column">
+      {parts.map((part, index) => {
+        if (part.startsWith('```')) {
+          const code = part.replace(/```/g, '').trim();
+          return (
+            <Box key={index} paddingX={1} borderStyle="round" borderColor="gray">
+              <Text color="yellow">{code}</Text>
+            </Box>
+          );
+        }
+        return part.split('\n').map((line, lineIndex) => {
+          if (line.startsWith('# ')) return <Text key={`${index}-${lineIndex}`} bold underline>{line.substring(2)}</Text>;
+          if (line.startsWith('* ') || line.startsWith('- ')) return <Text key={`${index}-${lineIndex}`}>• {line.substring(2)}</Text>;
+          return <Text key={`${index}-${lineIndex}`}>{line}</Text>;
+        });
+      })}
+    </Box>
+  );
+};
 
 interface ChatPanelProps {
   selectedFiles: Set<string>;
-  onStageChange: (change: StagedChange) => void;
-  isActive: boolean; // Nueva prop
+  onStageChanges: (changes: StagedChange[]) => void;
+  isActive: boolean;
+  setAiStatus: Dispatch<SetStateAction<AiStatus>>;
+  onPanelChange: () => void; // <-- 1. Añadimos la nueva prop
 }
 
 interface Message {
@@ -20,10 +47,16 @@ interface Message {
   text: string;
 }
 
-export function ChatPanel({ selectedFiles, onStageChange, isActive }: ChatPanelProps) {
+// 2. Añadimos `onPanelChange` a los argumentos
+export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus, onPanelChange }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  const handleInputChange = (value: string) => {
+    const sanitizedValue = value.replace(/(\r\n|\n|\r)/gm, " ");
+    setInputValue(sanitizedValue);
+  };
 
   const handleSubmit = async (value: string) => {
     if (!value.trim() || isLoading) return;
@@ -31,11 +64,13 @@ export function ChatPanel({ selectedFiles, onStageChange, isActive }: ChatPanelP
     setMessages(prev => [...prev, { sender: 'user', text: value }]);
     setInputValue('');
     setIsLoading(true);
+    setAiStatus('thinking');
 
+    const projectDir = path.resolve(process.cwd(), fs.existsSync(path.join(process.cwd(), 'proyectos')) ? 'proyectos' : '');
     const contextFiles = await Promise.all(
-      Array.from(selectedFiles).map(async filePath => {
-        const absolutePath = path.resolve(process.cwd(), filePath);
-        const content = await fs.readFile(absolutePath, 'utf-8');
+      Array.from(selectedFiles).map(async (filePath) => {
+        const absolutePath = path.join(projectDir, filePath);
+        const content = await fsPromises.readFile(absolutePath, 'utf-8');
         return { path: filePath, content };
       })
     );
@@ -45,16 +80,30 @@ export function ChatPanel({ selectedFiles, onStageChange, isActive }: ChatPanelP
     
     setMessages(prev => [...prev, { sender: 'ai', text: aiResponse.explanation }]);
     
-    if (aiResponse.responseType === 'file_creation' || aiResponse.responseType === 'file_modification') {
-      onStageChange({
-        filePath: aiResponse.filePath,
-        content: aiResponse.content,
-        type: aiResponse.responseType === 'file_creation' ? 'creation' : 'modification'
-      });
+    const newChanges = aiResponse.changes
+      .filter((change: any) => change.type === 'file_creation' || change.type === 'file_modification')
+      .map((change: any) => ({
+        filePath: change.filePath,
+        content: change.content,
+        type: change.type === 'file_creation' ? 'creation' : 'modification'
+      }));
+
+    if (newChanges.length > 0) {
+      onStageChanges(newChanges);
     }
 
     setIsLoading(false);
+    setAiStatus('idle');
   };
+
+  // 3. Añadimos un useInput para manejar el Tab
+  // Lo hacemos aquí para que no interfiera con el `onSubmit` de `TextInput`
+  useInput((input, key) => {
+      if (key.tab) {
+          onPanelChange();
+          return;
+      }
+  }, { isActive });
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -75,7 +124,7 @@ export function ChatPanel({ selectedFiles, onStageChange, isActive }: ChatPanelP
             <Text bold color={msg.sender === 'user' ? 'cyan' : 'magenta'}>
               {msg.sender === 'user' ? 'Tú:' : 'IA:'}
             </Text>
-            <Text>{msg.text}</Text>
+            {msg.sender === 'ai' ? <SimpleMarkdown content={msg.text} /> : <Text>{msg.text}</Text>}
           </Box>
         ))}
         {isLoading && <Text color="gray">IA está escribiendo...</Text>}
@@ -88,9 +137,8 @@ export function ChatPanel({ selectedFiles, onStageChange, isActive }: ChatPanelP
           {!isLoading && (
             <TextInput 
               value={inputValue}
-              onChange={setInputValue}
+              onChange={handleInputChange}
               onSubmit={handleSubmit}
-              // El componente TextInput se enfocará automáticamente si el panel está activo.
               focus={isActive} 
             />
           )}
