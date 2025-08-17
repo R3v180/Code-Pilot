@@ -1,26 +1,51 @@
 // Ruta: /src/services/gemini.ts
-// Versión: 3.0 (Añade memoria conversacional)
+// Versión: 3.3.0 (Usa getActiveApiKey del nuevo sistema de config)
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import chalk from 'chalk';
-import type { Message } from '../ui/ChatPanel.js'; // <-- 1. Importamos el tipo Message
+import type { Message } from '../ui/ChatPanel.js';
+// 1. Cambiamos la importación para usar la nueva función
+import { getActiveApiKey } from '../utils/config.js';
 
-// --- Funciones de Utilidad y Configuración (sin cambios) ---
-function getApiKey(): string {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error(chalk.red.bold('Error: La variable de entorno GEMINI_API_KEY no está configurada.'));
-    console.log(chalk.yellow('Asegúrate de tener un archivo .env en la raíz del proyecto con tu clave de API.'));
-    process.exit(1);
-  }
-  return apiKey;
+let genAI: GoogleGenerativeAI;
+let model: any;
+
+function initializeApi(apiKey: string) {
+  genAI = new GoogleGenerativeAI(apiKey);
+  model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 }
 
-const apiKey = getApiKey();
-const genAI = new GoogleGenerativeAI(apiKey);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+function setupApi() {
+  // 2. Usamos la nueva función
+  const apiKey = getActiveApiKey();
+  if (!apiKey) {
+    console.error(chalk.red.bold('Error Crítico: No se encontró la API Key.'));
+    process.exit(1);
+  }
+  initializeApi(apiKey);
+}
 
-// --- Funciones antiguas (sin cambios) ---
+export async function validateApiKey(apiKey: string): Promise<{isValid: boolean; error?: string}> {
+  try {
+    const tempGenAI = new GoogleGenerativeAI(apiKey);
+    const tempModel = tempGenAI.getGenerativeModel({ model: "gemini-2.5-pro" });
+    await tempModel.countTokens("validation_ping");
+    return { isValid: true };
+  } catch (error: any) {
+    const errorMessage = error.message || 'Error desconocido.';
+    if (errorMessage.includes('API key not valid')) {
+      return { isValid: false, error: 'La API Key introducida no es válida.' };
+    }
+    if (errorMessage.includes('fetch failed')) {
+        return { isValid: false, error: 'No se pudo conectar con la API de Google. Revisa tu conexión a internet.' };
+    }
+    if (errorMessage.includes('is not found for API version')) {
+        return { isValid: false, error: 'Tu clave de API es válida, pero no tienes acceso al modelo Gemini necesario.' };
+    }
+    return { isValid: false, error: `Ocurrió un error inesperado. Revisa tu clave y conexión.` };
+  }
+}
+
 export async function explainCode(code: string): Promise<string> {
     return "Explicación no implementada en este flujo.";
 }
@@ -31,16 +56,15 @@ export async function generatePlan(taskDescription: string, projectStructure: st
     return "Plan no implementado en este flujo.";
 }
 
-
-// --- Función de Chat Interactivo (Modificada) ---
-// 2. Actualizamos la firma de la función para aceptar `chatHistory`
 export async function generateChatResponse(
   userMessage: string,
   contextFiles: { path: string; content: string }[],
   chatHistory: Message[]
 ): Promise<string> {
+  if (!model) {
+    setupApi();
+  }
   
-  // --- Construcción del contexto de archivos (sin cambios) ---
   let filesContext = 'No se ha proporcionado ningún archivo como contexto.';
   if (contextFiles.length > 0) {
     filesContext = contextFiles.map(file => 
@@ -48,8 +72,6 @@ export async function generateChatResponse(
     ).join('\n\n');
   }
 
-  // --- 3. Construcción del historial de la conversación ---
-  // Limitamos el historial a los últimos 6 mensajes para no exceder los límites de tokens
   const historyLimit = 6;
   const recentHistory = chatHistory.slice(-historyLimit);
 
@@ -57,18 +79,18 @@ export async function generateChatResponse(
     if (message.sender === 'user') {
       return `--- Usuario:\n${message.text}`;
     } else {
-      // Para la IA, solo incluimos la explicación, no el JSON completo para ser concisos
       try {
-        const aiResponse = JSON.parse(message.text);
-        return `--- IA:\n${aiResponse.explanation || message.text}`;
+        const aiResponse = JSON.parse(JSON.stringify(message.text)); // Usamos JSON.stringify para asegurar que es un string válido
+        // Si el texto de la IA es a su vez un JSON stringified, lo parseamos
+        const parsedText = JSON.parse(aiResponse);
+        return `--- IA:\n${parsedText.explanation || message.text}`;
       } catch (e) {
-        // Si el texto de la IA no es un JSON, lo usamos tal cual
+        // Si no es un JSON, lo usamos tal cual
         return `--- IA:\n${message.text}`;
       }
     }
   }).join('\n');
 
-  // 4. Integramos el historial en el prompt final
   const structuredPrompt = `
 Eres Code-Pilot, un asistente de programación experto. Tu tarea es responder a las solicitudes del usuario con un objeto JSON estructurado.
 
@@ -88,29 +110,6 @@ El objeto JSON debe tener la siguiente estructura:
       "type": "thought" | "file_creation" | "file_modification",
       "filePath": "string" | null,
       "content": "string" | null
-    }
-  ]
-}
-
-**Reglas de Decisión para los cambios:**
-- Si el usuario solo hace una pregunta o saludas, el array 'changes' debe contener un único objeto con "type": "thought". 'filePath' y 'content' deben ser null.
-- Si la intención es crear UNO O MÁS archivos, añade un objeto por cada archivo a crear en el array 'changes' con "type": "file_creation".
-- Si la intención es modificar UNO O MÁS archivos, añade un objeto por cada archivo a modificar en el array 'changes' con "type": "file_modification".
-- 'filePath' debe ser la ruta **relativa y exacta** desde la raíz del proyecto (ej: "src/componente.ts" o "miweb/index.html").
-
-**Ejemplo para modificar DOS archivos:**
-{
-  "explanation": "Claro, he modificado 'index.html' para enlazar el CSS y he añadido los estilos básicos a 'styles.css'.",
-  "changes": [
-    {
-      "type": "file_modification",
-      "filePath": "miweb/index.html",
-      "content": "<!DOCTYPE html>..."
-    },
-    {
-      "type": "file_creation",
-      "filePath": "miweb/styles.css",
-      "content": "body { font-family: sans-serif; }"
     }
   ]
 }

@@ -1,11 +1,9 @@
 // Ruta: src/ui/StatusBar.tsx
-// Versión: 1.0
+// Versión: 1.1 (Añade el atajo de teclado para la configuración)
 
 import React from 'react';
 import { Box, Text } from 'ink';
 
-// Definimos los tipos para las props que recibirá el componente.
-// Esto nos asegura que pasaremos la información correcta desde App.tsx.
 export type ActivePanel = 'explorer' | 'chat' | 'staging';
 export type AiStatus = 'idle' | 'thinking';
 
@@ -16,19 +14,27 @@ interface StatusBarProps {
   stagedChangeCount: number;
 }
 
-// Función auxiliar para mantener el JSX limpio. Devuelve el texto de ayuda
-// apropiado según el panel que esté activo.
 const getHelpText = (panel: ActivePanel): string => {
+  // --- INICIO DE LA MODIFICACIÓN ---
+  // Se ha refactorizado para incluir siempre los atajos globales.
+  let panelSpecificHelp = '';
+  const globalHelp = '[Tab] Cambiar Panel | [Ctrl+K] Configuración';
+
   switch (panel) {
     case 'explorer':
-      return '[↑/↓] Navegar | [Espacio] Seleccionar | [Tab] Cambiar Panel';
+      panelSpecificHelp = '[↑/↓] Navegar | [Espacio] Seleccionar';
+      break;
     case 'chat':
-      return '[Enter] Enviar | [Tab] Cambiar Panel';
+      panelSpecificHelp = '[Enter] Enviar';
+      break;
     case 'staging':
-      return '[↑/↓] Navegar | [Enter] Acciones | [Tab] Cambiar Panel';
-    default:
-      return '[Tab] para cambiar de panel';
+      panelSpecificHelp = '[↑/↓] Navegar | [Enter] Acciones';
+      break;
   }
+  
+  // Unimos la ayuda específica del panel con la ayuda global.
+  return panelSpecificHelp ? `${panelSpecificHelp} | ${globalHelp}` : globalHelp;
+  // --- FIN DE LA MODIFICACIÓN ---
 };
 
 export function StatusBar({
