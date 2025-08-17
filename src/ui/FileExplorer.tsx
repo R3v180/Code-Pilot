@@ -1,5 +1,5 @@
 // Ruta: /src/ui/FileExplorer.tsx
-// Versión: 3.2 (Corrige crash de renderizado por espacio en JSX)
+// Versión: 3.3 (Se recarga cuando el sistema de archivos cambia)
 
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
@@ -12,6 +12,7 @@ interface FileExplorerProps {
   onBulkFileSelect: (filePaths: string[], action: 'select' | 'deselect') => void;
   isActive: boolean;
   onPanelChange: () => void;
+  fileSystemVersion: number; // 1. Recibimos la nueva prop
 }
 
 interface FlatNode {
@@ -24,7 +25,7 @@ interface FlatNode {
 const FOLDER_ICON = '📁';
 const FILE_ICON = '📄';
 
-export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, isActive, onPanelChange }: FileExplorerProps) {
+export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, isActive, onPanelChange, fileSystemVersion }: FileExplorerProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [flatStructure, setFlatStructure] = useState<FlatNode[]>([]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -32,7 +33,9 @@ export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, is
 
   const visibleHeight = process.stdout.rows > 10 ? process.stdout.rows - 10 : 10;
 
+  // 2. MODIFICACIÓN CLAVE: Este useEffect ahora se ejecutará al inicio Y cada vez que fileSystemVersion cambie.
   useEffect(() => {
+    setIsLoading(true); // Mostramos el mensaje de carga mientras se actualiza
     getProjectStructureObject()
       .then(treeObject => {
         const flattenedNodes = flattenTree(treeObject);
@@ -43,7 +46,9 @@ export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, is
         setFlatStructure([{ line: 'Error al cargar la estructura.', path: '', type: 'directory', name: 'Error' }]);
         setIsLoading(false);
       });
-  }, []);
+  }, [fileSystemVersion]); // El array de dependencias ahora escucha los cambios
+
+  // ... el resto del componente no necesita cambios ...
 
   useInput((input, key) => {
     if (key.tab) {
@@ -124,12 +129,9 @@ export function FileExplorer({ selectedFiles, onFileSelect, onBulkFileSelect, is
         const indent = node.line.substring(0, node.line.search(/\S/));
 
         return (
-          // --- INICIO DE LA CORRECCIÓN ---
-          // Combinamos todo en una única plantilla de string para evitar espacios literales.
           <Text key={node.path} color={textColor}>
             {`${isSelectedForNav ? '> ' : '  '}${checkbox} ${indent}${icon} ${indentedName}`}
           </Text>
-          // --- FIN DE LA CORRECCIÓN ---
         );
       })}
     </Box>

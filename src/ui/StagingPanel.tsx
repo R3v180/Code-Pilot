@@ -1,7 +1,7 @@
 // Ruta: /src/ui/StagingPanel.tsx
-// Versión: 4.2 (Añade manejo de cambio de panel y reseteo de foco)
+// Versión: 4.4 (Acepta setActivePanel para consistencia)
 
-import React from 'react';
+import React, { Dispatch, SetStateAction } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { StagedChange } from './App.js';
 import { diffLines, type Change } from 'diff';
@@ -9,6 +9,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import fsSync from 'node:fs';
 import { Editor } from './Editor.js';
+import { ActivePanel } from './StatusBar.js';
 
 interface StagingPanelProps {
   stagedChanges: StagedChange[];
@@ -16,14 +17,14 @@ interface StagingPanelProps {
   onApplyChange: (index: number) => void;
   onDiscardChange: (index: number) => void;
   onEditChange: (index: number, newContent: string) => void;
-  onPanelChange: () => void; // <-- 1. Añadimos la nueva prop
+  onPanelChange: () => void;
+  setActivePanel: Dispatch<SetStateAction<ActivePanel>>;
 }
 
 type StagingMode = 'navigate' | 'action' | 'edit';
 type Action = 'apply' | 'discard' | 'edit';
 
-// 2. Añadimos `onPanelChange` a los argumentos
-export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscardChange, onEditChange, onPanelChange }: StagingPanelProps) {
+export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscardChange, onEditChange, onPanelChange, setActivePanel }: StagingPanelProps) {
     const [selectedIndex, setSelectedIndex] = React.useState(0);
     const [diff, setDiff] = React.useState<Change[] | null>(null);
     const [isLoadingDiff, setIsLoadingDiff] = React.useState(false);
@@ -53,12 +54,23 @@ export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscard
         if (mode !== 'edit' && stagedChanges.length > 0 && selectedIndex < stagedChanges.length) {
             setIsLoadingDiff(true);
             const change = stagedChanges[selectedIndex];
+            if (!change) { 
+                setIsLoadingDiff(false);
+                return;
+            }
+
             const projectDir = path.resolve(process.cwd(), fsSync.existsSync(path.join(process.cwd(), 'proyectos')) ? 'proyectos' : '');
             const absolutePath = path.join(projectDir, change.filePath);
 
             fs.readFile(absolutePath, 'utf-8')
-                .then(originalContent => setDiff(diffLines(originalContent, change.content)))
-                .catch(() => setDiff(diffLines('', change.content)))
+                .then(originalContent => {
+                    const newContent = change.content || '';
+                    setDiff(diffLines(originalContent, newContent));
+                })
+                .catch(() => {
+                    const newContent = change.content || '';
+                    setDiff(diffLines('', newContent));
+                })
                 .finally(() => setIsLoadingDiff(false));
         } else {
             setDiff(null);
@@ -66,7 +78,6 @@ export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscard
     }, [selectedIndex, stagedChanges, mode]);
 
     useInput((input, key) => {
-        // 3. Añadimos la lógica para manejar Tab
         if (key.tab) {
             onPanelChange();
             return;
@@ -128,7 +139,7 @@ export function StagingPanel({ stagedChanges, isActive, onApplyChange, onDiscard
     if (isActive && mode === 'edit' && selectedChange) {
         return (
             <Editor
-                initialContent={selectedChange.content}
+                initialContent={selectedChange.content || ''}
                 onSave={handleSave}
                 onCancel={handleCancel}
             />

@@ -1,8 +1,9 @@
 // Ruta: /src/services/gemini.ts
-// Versión: 2.1 (Funciones antiguas corregidas)
+// Versión: 3.0 (Añade memoria conversacional)
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import chalk from 'chalk';
+import type { Message } from '../ui/ChatPanel.js'; // <-- 1. Importamos el tipo Message
 
 // --- Funciones de Utilidad y Configuración (sin cambios) ---
 function getApiKey(): string {
@@ -19,12 +20,8 @@ const apiKey = getApiKey();
 const genAI = new GoogleGenerativeAI(apiKey);
 const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-
-// --- INICIO DE CORRECCIÓN ---
-// Añadimos retornos simples a estas funciones para que el compilador no se queje.
-// No se usan en la UI interactiva, pero deben cumplir con su contrato de tipo.
+// --- Funciones antiguas (sin cambios) ---
 export async function explainCode(code: string): Promise<string> {
-    // Esta función ya no es central, pero mantenemos la firma.
     return "Explicación no implementada en este flujo.";
 }
 export async function refactorCode(code: string, instruction: string): Promise<string> {
@@ -33,15 +30,17 @@ export async function refactorCode(code: string, instruction: string): Promise<s
 export async function generatePlan(taskDescription: string, projectStructure: string): Promise<string> {
     return "Plan no implementado en este flujo.";
 }
-// --- FIN DE CORRECCIÓN ---
 
 
-// --- Función de Chat Interactivo (sin cambios respecto a la versión anterior) ---
+// --- Función de Chat Interactivo (Modificada) ---
+// 2. Actualizamos la firma de la función para aceptar `chatHistory`
 export async function generateChatResponse(
   userMessage: string,
-  contextFiles: { path: string; content: string }[]
+  contextFiles: { path: string; content: string }[],
+  chatHistory: Message[]
 ): Promise<string> {
   
+  // --- Construcción del contexto de archivos (sin cambios) ---
   let filesContext = 'No se ha proporcionado ningún archivo como contexto.';
   if (contextFiles.length > 0) {
     filesContext = contextFiles.map(file => 
@@ -49,19 +48,38 @@ export async function generateChatResponse(
     ).join('\n\n');
   }
 
+  // --- 3. Construcción del historial de la conversación ---
+  // Limitamos el historial a los últimos 6 mensajes para no exceder los límites de tokens
+  const historyLimit = 6;
+  const recentHistory = chatHistory.slice(-historyLimit);
+
+  const historyContext = recentHistory.map(message => {
+    if (message.sender === 'user') {
+      return `--- Usuario:\n${message.text}`;
+    } else {
+      // Para la IA, solo incluimos la explicación, no el JSON completo para ser concisos
+      try {
+        const aiResponse = JSON.parse(message.text);
+        return `--- IA:\n${aiResponse.explanation || message.text}`;
+      } catch (e) {
+        // Si el texto de la IA no es un JSON, lo usamos tal cual
+        return `--- IA:\n${message.text}`;
+      }
+    }
+  }).join('\n');
+
+  // 4. Integramos el historial en el prompt final
   const structuredPrompt = `
 Eres Code-Pilot, un asistente de programación experto. Tu tarea es responder a las solicitudes del usuario con un objeto JSON estructurado.
 
 **Contexto de Archivos:**
 ${filesContext}
 
-**Solicitud del Usuario:**
----
-${userMessage}
----
+**Historial de la Conversación Reciente (el último mensaje es la solicitud actual del usuario):**
+${historyContext}
 
 **Tu Misión:**
-Analiza la solicitud y el contexto. Responde SIEMPRE con un objeto JSON válido. No incluyas texto ni markdown fuera del objeto JSON.
+Analiza la solicitud MÁS RECIENTE del usuario, usando el historial y el contexto de archivos para entender la conversación completa. Responde SIEMPRE con un objeto JSON válido. No incluyas texto ni markdown fuera del objeto JSON.
 El objeto JSON debe tener la siguiente estructura:
 {
   "explanation": "Una explicación en texto de tu razonamiento o la respuesta a la pregunta del usuario. Esto se mostrará en el chat.",

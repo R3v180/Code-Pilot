@@ -1,17 +1,18 @@
 // Ruta: /src/ui/ChatPanel.tsx
-// Versión: 3.1 (Añade manejo de cambio de panel)
+// Versión: 3.3 (Cambia automáticamente a Staging al recibir cambios)
 
 import React, { useState, Dispatch, SetStateAction } from 'react';
-import { Box, Text, useInput } from 'ink'; // Importamos useInput
+import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { generateChatResponse } from '../services/gemini.js';
 import fsPromises from 'node:fs/promises';
 import fs from 'node:fs';
 import path from 'node:path';
 import { StagedChange } from './App.js';
-import { AiStatus } from './StatusBar.js';
+import { AiStatus, ActivePanel } from './StatusBar.js'; // 1. Importamos ActivePanel
 
 const SimpleMarkdown: React.FC<{ content: string }> = ({ content }) => {
+  // ... (componente sin cambios)
   const parts = content.split(/(\`\`\`[\s\S]*?\`\`\`)/g);
   return (
     <Box flexDirection="column">
@@ -39,16 +40,17 @@ interface ChatPanelProps {
   onStageChanges: (changes: StagedChange[]) => void;
   isActive: boolean;
   setAiStatus: Dispatch<SetStateAction<AiStatus>>;
-  onPanelChange: () => void; // <-- 1. Añadimos la nueva prop
+  onPanelChange: () => void;
+  setActivePanel: Dispatch<SetStateAction<ActivePanel>>; // 2. Añadimos la nueva prop
 }
 
-interface Message {
+export interface Message {
   sender: 'user' | 'ai';
   text: string;
 }
 
-// 2. Añadimos `onPanelChange` a los argumentos
-export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus, onPanelChange }: ChatPanelProps) {
+// 3. Añadimos setActivePanel a los argumentos
+export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus, onPanelChange, setActivePanel }: ChatPanelProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -61,7 +63,10 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
   const handleSubmit = async (value: string) => {
     if (!value.trim() || isLoading) return;
 
-    setMessages(prev => [...prev, { sender: 'user', text: value }]);
+    const userMessage: Message = { sender: 'user', text: value };
+    const newMessages = [...messages, userMessage];
+
+    setMessages(newMessages);
     setInputValue('');
     setIsLoading(true);
     setAiStatus('thinking');
@@ -75,7 +80,7 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
       })
     );
     
-    const aiResponseJson = await generateChatResponse(value, contextFiles);
+    const aiResponseJson = await generateChatResponse(value, contextFiles, newMessages);
     const aiResponse = JSON.parse(aiResponseJson);
     
     setMessages(prev => [...prev, { sender: 'ai', text: aiResponse.explanation }]);
@@ -90,14 +95,14 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
 
     if (newChanges.length > 0) {
       onStageChanges(newChanges);
+      // 4. MEJORA DE UX: Si hay cambios, cambiamos el foco a Staging.
+      setActivePanel('staging');
     }
 
     setIsLoading(false);
     setAiStatus('idle');
   };
 
-  // 3. Añadimos un useInput para manejar el Tab
-  // Lo hacemos aquí para que no interfiera con el `onSubmit` de `TextInput`
   useInput((input, key) => {
       if (key.tab) {
           onPanelChange();
@@ -105,6 +110,7 @@ export function ChatPanel({ selectedFiles, onStageChanges, isActive, setAiStatus
       }
   }, { isActive });
 
+  // ... (resto del JSX sin cambios)
   return (
     <Box flexDirection="column" flexGrow={1}>
       <Text bold color={isActive ? "cyan" : "green"}>Panel de Chat</Text>
