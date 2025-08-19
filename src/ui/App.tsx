@@ -1,5 +1,5 @@
 // Ruta: /src/ui/App.tsx
-// Versión: 6.1 (Proporciona la función de refresco a AgentPanel)
+// Versión: 6.2 (Añade estado y control para el Modo Autónomo)
 
 import React, { useState, useEffect } from 'react';
 import { Box, useInput } from 'ink';
@@ -31,11 +31,15 @@ export function App({ projectPath }: AppProps) {
   const [aiStatus, setAiStatus] = useState<AiStatus>('idle');
   const [fileSystemVersion, setFileSystemVersion] = useState(0);
   const [mode, setMode] = useState<AppMode>('main');
+  const [isAutoMode, setIsAutoMode] = useState(false); // 1. Nuevo estado para el Modo Auto
 
-  // 1. Creamos la función para refrescar, que simplemente incrementa la versión.
   const refreshFileSystem = () => setFileSystemVersion(v => v + 1);
 
   useInput((input, key) => {
+    // 2. Nuevo atajo global para activar/desactivar el Modo Auto
+    if (key.ctrl && input === 'a') {
+      setIsAutoMode(prev => !prev);
+    }
     if (key.ctrl && input === 'k') {
       setMode(current => current === 'main' ? 'config' : 'main');
     }
@@ -48,7 +52,6 @@ export function App({ projectPath }: AppProps) {
       ignoreInitial: true,
       depth: 10,
     });
-    // Usamos nuestra nueva función aquí también para mantener la consistencia.
     watcher
       .on('add', refreshFileSystem).on('unlink', refreshFileSystem)
       .on('addDir', refreshFileSystem).on('unlinkDir', refreshFileSystem);
@@ -78,7 +81,7 @@ export function App({ projectPath }: AppProps) {
     await fsPromises.mkdir(path.dirname(absolutePath), { recursive: true });
     await fsPromises.writeFile(absolutePath, contentToWrite); 
     setStagedChanges(prev => prev.filter((_, i) => i !== index));
-    refreshFileSystem(); // Usamos la nueva función
+    refreshFileSystem();
     setActivePanel('agent');
   };
   const handleDiscardChange = (index: number) => {
@@ -110,12 +113,14 @@ export function App({ projectPath }: AppProps) {
           />
         </Box>
         <Box borderStyle="round" borderColor={activePanel === 'agent' ? 'cyan' : 'magenta'} width="50%" paddingX={1}>
+          {/* 3. Pasamos el estado del Modo Auto al AgentPanel */}
           <AgentPanel
             projectPath={projectPath}
             isActive={activePanel === 'agent'}
             onPanelChange={handlePanelChange}
             setAiStatus={setAiStatus}
-            refreshFileSystem={refreshFileSystem} // 2. Pasamos la función como prop
+            refreshFileSystem={refreshFileSystem}
+            isAutoMode={isAutoMode}
           />
         </Box>
         <Box borderStyle="round" borderColor={activePanel === 'staging' ? 'cyan' : 'yellow'} flexGrow={1} paddingX={1}>
@@ -131,11 +136,13 @@ export function App({ projectPath }: AppProps) {
           />
         </Box>
       </Box>
+      {/* 4. Pasamos el estado del Modo Auto a la StatusBar */}
       <StatusBar
         activePanel={activePanel}
         aiStatus={aiStatus}
         selectedFileCount={selectedFiles.size}
         stagedChangeCount={stagedChanges.length}
+        isAutoMode={isAutoMode}
       />
     </Box>
   );

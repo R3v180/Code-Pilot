@@ -1,5 +1,5 @@
 // Ruta: /code-pilot/src/utils/file-system.ts
-// Versión: 2.5 (Añade función para listar directorios de proyectos)
+// Versión: 2.6 (getProjectStructure ahora acepta un basePath)
 
 import { glob } from 'glob';
 import path from 'node:path';
@@ -21,32 +21,20 @@ export interface FileTreeNode {
   type: 'file' | 'directory';
 }
 
-// --- NUEVA FUNCIÓN ---
-/**
- * Lista únicamente los subdirectorios de una ruta dada.
- * Es ideal para encontrar los proyectos dentro de la carpeta 'proyectos'.
- * @param basePath La ruta del directorio a escanear.
- * @returns Una promesa que se resuelve con un array de nombres de directorios.
- */
 export async function getProjectDirectories(basePath: string): Promise<string[]> {
   try {
-    // Si el directorio base (ej. 'proyectos') no existe, lo creamos y devolvemos una lista vacía.
     if (!fsSync.existsSync(basePath)) {
       fsSync.mkdirSync(basePath, { recursive: true });
       return [];
     }
-
     const dirents = await fs.readdir(basePath, { withFileTypes: true });
     return dirents
       .filter(dirent => dirent.isDirectory())
       .map(dirent => dirent.name);
   } catch (error) {
-    // En caso de cualquier otro error de lectura, devolvemos una lista vacía para no bloquear la app.
     return [];
   }
 }
-// --- FIN NUEVA FUNCIÓN ---
-
 
 export async function getProjectStructureObject(basePath: string): Promise<FileTreeNode> {
   const files = await glob('**/*', {
@@ -121,8 +109,16 @@ export const flattenTree = (node: FileTreeNode, prefix = '', allNodes: { line: s
   return allNodes;
 };
 
-export async function getProjectStructure(): Promise<string> {
-    const obj = await getProjectStructureObject(process.cwd());
+
+// --- INICIO DE LA MODIFICACIÓN ---
+/**
+ * Genera una representación en string de la estructura de archivos de un directorio.
+ * @param basePath La ruta al directorio a escanear.
+ * @returns Una promesa que se resuelve con el 'árbol' de archivos como un string.
+ */
+export async function getProjectStructure(basePath: string): Promise<string> {
+    const obj = await getProjectStructureObject(basePath);
     const flattened = flattenTree(obj);
     return flattened.map(f => f.line).join('\n');
 }
+// --- FIN DE LA MODIFICACIÓN ---

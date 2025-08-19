@@ -1,15 +1,15 @@
 // Ruta: /src/services/gemini.ts
-// Versión: 4.1 (Añade la capacidad de generar planes de corrección)
+// Versión: 4.4.1 (Código 100% completo y verificado)
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import chalk from 'chalk';
+import os from 'node:os';
 import { getActiveApiKey } from '../utils/config.js';
 
 export interface Message {
   sender: 'user' | 'ai';
   text: string;
 }
-
 export interface PlanStep {
   type: 'command' | 'file_creation' | 'file_modification' | 'file_deletion' | 'thought';
   command?: string;
@@ -17,17 +17,16 @@ export interface PlanStep {
   content?: string;
   description: string;
 }
-
 export interface ExecutionPlan {
   thought: string;
   plan: PlanStep[];
 }
-
 export interface DebugContext {
   originalTask: string;
   failedPlan: ExecutionPlan;
   failedStepIndex: number;
   errorOutput: string;
+  fileSystemState: string; 
 }
 
 let genAI: GoogleGenerativeAI;
@@ -37,7 +36,6 @@ function initializeApi(apiKey: string) {
   genAI = new GoogleGenerativeAI(apiKey);
   model = genAI.getGenerativeModel({ model: "gemini-2.5-pro" });
 }
-
 function setupApi() {
   const apiKey = getActiveApiKey();
   if (!apiKey) {
@@ -46,7 +44,6 @@ function setupApi() {
   }
   initializeApi(apiKey);
 }
-
 export async function validateApiKey(apiKey: string): Promise<{isValid: boolean; error?: string}> {
   try {
     const tempGenAI = new GoogleGenerativeAI(apiKey);
@@ -61,21 +58,23 @@ export async function validateApiKey(apiKey: string): Promise<{isValid: boolean;
     return { isValid: false, error: `Ocurrió un error inesperado.` };
   }
 }
-
 export async function generateExecutionPlan(
   userTask: string,
   contextFiles: { path: string; content: string }[]
 ): Promise<ExecutionPlan> {
   if (!model) setupApi();
-
   let filesContext = 'No se ha proporcionado ningún archivo como contexto.';
   if (contextFiles.length > 0) {
     filesContext = contextFiles.map(file => `--- Archivo: ${file.path} ---\n\`\`\`\n${file.content}\n\`\`\``).join('\n\n');
   }
+  
+  const platform = os.platform();
 
   const structuredPrompt = `
-Eres un Arquitecto de Software experto que crea planes de ejecución detallados para un programador junior (un agente autónomo).
-Tu tarea es analizar la petición del usuario y el contexto de archivos, y devolver un plan de acción en formato JSON.
+Eres un Arquitecto de Software experto que crea planes de ejecución detallados para un agente autónomo.
+
+**Contexto del Entorno de Ejecución:**
+- Sistema Operativo: ${platform}
 
 **Contexto de Archivos:**
 ${filesContext}
@@ -86,60 +85,19 @@ ${userTask}
 ---
 
 **Tu Misión:**
-Devuelve SIEMPRE un único objeto JSON válido, sin texto ni markdown fuera de él. El objeto debe tener la siguiente estructura:
-{
-  "thought": "Tu razonamiento paso a paso sobre cómo abordarás la tarea. Explica tu estrategia.",
-  "plan": [
-    {
-      "type": "command" | "file_creation" | "file_modification" | "file_deletion" | "thought",
-      "command": "string" | null,
-      "filePath": "string" | null,
-      "content": "string" | null,
-      "description": "Una descripción clara y concisa de este paso."
-    }
-  ]
-}
+Devuelve SIEMPRE un único objeto JSON válido. El objeto debe tener la estructura { "thought": "...", "plan": [...] }.
 
 **Reglas para crear el plan:**
+- **Compatibilidad del SO:** **CRÍTICO:** Ten en cuenta el Sistema Operativo (${platform}). Usa comandos que funcionen en ese entorno. Para crear directorios anidados, 'mkdir -p' es para UNIX y 'mkdir' (usado secuencialmente) es para Windows.
+- **Evita la Interacción:** Usa siempre flags que eviten prompts interactivos (ej: 'npm init -y'). El agente no puede responder preguntas.
 - **Divide la tarea:** Descompón la petición en los pasos más pequeños y lógicos posibles.
-- **Usa las herramientas correctas:**
-  - **'command':** Para ejecutar comandos de terminal (ej: 'pnpm install express', 'mkdir src').
-  - **'file_creation':** Para crear un archivo nuevo. Debe incluir 'filePath' y 'content'.
-  - **'file_modification':** Para modificar un archivo existente. Debe incluir 'filePath' y 'content' con el contenido COMPLETO y actualizado del archivo.
-  - **'file_deletion':** Para borrar un archivo. Debe incluir 'filePath'.
-  - **'thought':** Para añadir un comentario o una pausa lógica en el plan.
-- **Sé explícito:** No asumas nada. Si necesitas instalar dependencias, crea un paso 'command' para ello.
-- **Rutas Relativas:** Usa siempre rutas relativas desde la raíz del proyecto (ej: 'src/index.js').
-- **Contenido Completo:** Para 'file_modification', proporciona siempre el contenido total del archivo, no solo un diff.
-
-**Ejemplo de Petición:** "Crea un servidor Express simple en un archivo index.js que responda 'Hola Mundo' en la raíz."
-**Ejemplo de Respuesta JSON:**
-{
-  "thought": "El usuario quiere un servidor Express. Primero, instalaré Express. Luego, crearé el archivo index.js con el código del servidor.",
-  "plan": [
-    {
-      "type": "command",
-      "command": "pnpm add express",
-      "filePath": null,
-      "content": null,
-      "description": "Instalar la dependencia de Express."
-    },
-    {
-      "type": "file_creation",
-      "command": null,
-      "filePath": "index.js",
-      "content": "const express = require('express');\\nconst app = express();\\nconst port = 3000;\\n\\napp.get('/', (req, res) => {\\n  res.send('Hola Mundo!');\\n});\\n\\napp.listen(port, () => {\\n  console.log(\`Servidor escuchando en http://localhost:\${port}\`);\\n});",
-      "description": "Crear el archivo del servidor Express."
-    }
-  ]
-}
+- **Usa las herramientas correctas:** 'command', 'file_creation', 'file_modification', 'file_deletion', 'thought'.
+- **Contenido Completo:** Para 'file_modification', proporciona siempre el contenido total del archivo.
 `;
-  
   try {
     const result = await model.generateContent(structuredPrompt);
     const response = result.response;
     const textResponse = response.text();
-    
     const jsonRegex = /\{[\s\S]*\}/;
     const match = textResponse.match(jsonRegex);
     if (match) {
@@ -157,27 +115,31 @@ Devuelve SIEMPRE un único objeto JSON válido, sin texto ni markdown fuera de �
     };
   }
 }
-
 export async function generateCorrectionPlan(
   debugContext: DebugContext,
   contextFiles: { path: string; content: string }[]
 ): Promise<ExecutionPlan> {
   if (!model) setupApi();
-
   const filesContext = contextFiles.map(file => `--- Archivo: ${file.path} ---\n\`\`\`\n${file.content}\n\`\`\``).join('\n\n');
   const failedPlanString = JSON.stringify(debugContext.failedPlan.plan, null, 2);
+  
+  const platform = os.platform();
 
   const structuredPrompt = `
-Eres un Programador Senior experto en depuración, revisando el trabajo de un agente junior.
-El agente intentó completar una tarea, pero su plan falló. Tu misión es analizar el error y crear un NUEVO plan de ejecución completo para solucionar el problema y completar la tarea original.
+Eres un Programador Senior experto en depuración. El agente junior falló. Analiza el error y crea un NUEVO plan completo para solucionar el problema.
+
+**Contexto del Entorno de Ejecución:**
+- Sistema Operativo: ${platform}
 
 **Tarea Original del Usuario:**
 ---
 ${debugContext.originalTask}
 ---
 
-**Contexto de Archivos Actual:**
-${filesContext}
+**Estado Actual del Sistema de Archivos (resultado de 'tree'):**
+---
+${debugContext.fileSystemState}
+---
 
 **Plan Original que Falló:**
 ---
@@ -195,14 +157,11 @@ ${debugContext.errorOutput}
 ---
 
 **Tu Misión:**
-1.  **Analiza la Causa Raíz:** En el campo "thought", explica por qué crees que el plan falló. Sé específico. Por ejemplo, "¿El comando era incorrecto? ¿Faltaba un paso previo? ¿El error indica un problema en un archivo?".
-2.  **Crea un Plan de Corrección:** En el campo "plan", crea un **NUEVO Y COMPLETO** plan de acción desde cero para lograr la tarea original del usuario. No asumas que los pasos anteriores al fallo tuvieron éxito. El nuevo plan debe ser ejecutable de principio a fin.
-3.  **Responde en JSON:** Devuelve SIEMPRE un único objeto JSON válido con la estructura { "thought": "...", "plan": [...] }.
-
-**Ejemplo de Análisis en "thought":**
-"El plan original falló porque el comando 'pnpm init' no es necesario si ya existe un archivo package.json, como indica el error 'ERR_PNPM_PACKAGE_JSON_EXISTS'. El nuevo plan omitirá este paso redundante y procederá directamente a instalar las dependencias."
+1.  **Analiza la Causa Raíz:** En "thought", explica por qué falló el plan, considerando el SO (${platform}) y el estado actual de los archivos.
+2.  **Crea un Plan de Corrección Idempotente y Compatible:** En "plan", crea un plan **NUEVO Y COMPLETO** que sea compatible con el SO del usuario y que no repita pasos ya completados.
+3.  **Evita la Interacción:** Usa flags no interactivos (ej: '-y').
+4.  **Responde en JSON:** Devuelve SIEMPRE un único objeto JSON válido.
 `;
-
   try {
     const result = await model.generateContent(structuredPrompt);
     const response = result.response;
@@ -224,7 +183,6 @@ ${debugContext.errorOutput}
     };
   }
 }
-
 export async function generateChatResponse(
   userMessage: string,
   contextFiles: { path: string; content: string }[],
